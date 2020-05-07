@@ -78,6 +78,7 @@ def train(data_dir,
                       weights=weights,
                       resume=resume,
                       mixed_precision=mixed_precision)
+    trainer.metrics = 1
     while trainer.epoch < epochs:
         trainer.step()
         if not notest:
@@ -85,6 +86,7 @@ def train(data_dir,
             metrics = test(trainer.model, val_fetcher)
             if metrics < trainer.metrics:
                 best = True
+                print('save best, NME: %g' % metrics)
                 trainer.metrics = metrics
         if not nosave:
             trainer.save(best)

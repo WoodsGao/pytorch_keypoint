@@ -17,7 +17,6 @@ def test(model, fetcher):
     val_loss = 0
     classes = fetcher.loader.dataset.classes
     num_classes = len(classes)
-    total_size = 0
     # true positive / intersection
     n = torch.zeros(num_classes)
     l2_sum = torch.zeros(num_classes)
@@ -25,6 +24,8 @@ def test(model, fetcher):
     for idx, (inputs, targets) in enumerate(pbar):
         batch_idx = idx + 1
         outputs = model(inputs)
+        if idx == 0:
+            show_batch(inputs, outputs)
         loss = compute_loss(outputs, targets, model)
         val_loss += loss.item()
         normalize_size = (64, 64)
