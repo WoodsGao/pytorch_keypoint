@@ -1,13 +1,15 @@
+import json
 import os
 import os.path as osp
-import json
 import random
-import numpy as np
+
 import cv2
+import numpy as np
 import torch
 import torch.nn.functional as F
 from imgaug import augmenters as ia
-from imgaug.augmentables.segmaps import SegmentationMapsOnImage
+from imgaug.augmentables.polys import Polygon, PolygonsOnImage
+
 from pytorch_modules.utils import IMG_EXT
 
 TRAIN_AUGS = ia.SomeOf(
@@ -37,45 +39,24 @@ TRAIN_AUGS = ia.SomeOf(
         #                       random_state=True)),
         #     ])),
         ia.Dropout([0.015, 0.1]),  # drop 5% or 20% of all pixels
-        ia.Sharpen((0.0, 1.0)),  # sharpen the image
+        # ia.Sharpen((0.0, 1.0)),  # sharpen the image
         ia.Affine(
             scale=(0.8, 1.2),
             translate_percent=(-0.1, 0.1),
-            rotate=(-15, 15),
+            rotate=(-45, 45),
             shear=(-0.1,
                    0.1)),  # rotate by -45 to 45 degrees (affects heatmaps)
         # ia.ElasticTransformation(
         #     alpha=(0, 10),
         #     sigma=(0, 10)),  # apply water effect (affects heatmaps)
         # ia.PiecewiseAffine(scale=(0, 0.03), nb_rows=(2, 6), nb_cols=(2, 6)),
-        ia.GaussianBlur((0, 3)),
+        # ia.GaussianBlur((0, 3)),
         ia.Fliplr(0.1),
         ia.Flipud(0.1),
         # ia.LinearContrast((0.5, 1)),
-        ia.AdditiveGaussianNoise(loc=(0, 10), scale=(0, 10))
+        # ia.AdditiveGaussianNoise(loc=(0, 10), scale=(0, 10))
     ],
     random_state=True)
-
-
-def voc_colormap(N=256):
-    def bitget(val, idx):
-        return ((val & (1 << idx)) != 0)
-
-    cmap = np.zeros((N, 3), dtype=np.uint8)
-    for i in range(N):
-        r = g = b = 0
-        c = i
-        for j in range(8):
-            r |= (bitget(c, 0) << 7 - j)
-            g |= (bitget(c, 1) << 7 - j)
-            b |= (bitget(c, 2) << 7 - j)
-            c >>= 3
-        # print([r, g, b])
-        cmap[i, :] = [b, g, r]
-    return cmap
-
-
-VOC_COLORMAP = voc_colormap(32)
 
 
 class BasicDataset(torch.utils.data.Dataset):
@@ -94,7 +75,7 @@ class BasicDataset(torch.utils.data.Dataset):
         return None, None
 
     def __getitem__(self, idx):
-        img, seg = self.get_data(idx)
+        img, kps = self.get_data(idx)
         img = img[..., ::-1]
         h, w, c = img.shape
 
@@ -108,24 +89,45 @@ class BasicDataset(torch.utils.data.Dataset):
             resize = ia.Resize(self.img_size)
 
         img = resize.augment_image(img)
-        seg = resize.augment_segmentation_maps(seg)
+        kps = resize.augment_polygons(kps)
         # augment
         if self.augments is not None:
             augments = self.augments.to_deterministic()
             img = augments.augment_image(img)
-            seg = augments.augment_segmentation_maps(seg)
+            kps = augments.augment_polygons(kps)
+        heats = [np.zeros(img.shape[:2])] * len(self.classes)
+        for kp in kps.polygons:
+            c = kp.label
+            point = kp.exterior.astype(np.int32)
+            x = np.arange(img.shape[1], dtype=np.float)
+            y = np.arange(img.shape[0], dtype=np.float)
+            xx, yy = np.meshgrid(x, y)
+
+            # evaluate kernels at grid points
+            xxyy = np.c_[xx.ravel(), yy.ravel()]
+            sigma = 20  # 65.9  # math.sqrt(- math.pow(100, 2) / math.log(0.1))
+            xxyy -= point
+            x_term = xxyy[:, 0]**2
+            y_term = xxyy[:, 1]**2
+            exp_value = -(x_term + y_term) / 2 / pow(sigma, 2)
+            zz = np.exp(exp_value)
+            heat = zz.reshape(img.shape[:2])
+            heats[c] = heat
+            # cv2.imshow('c', (heat * 255).astype(np.uint8))
+            # cv2.waitKey(0)
+
+        heats = np.stack(heats, 0)
 
         img = img.transpose(2, 0, 1)
         img = np.ascontiguousarray(img)
-        seg = seg.get_arr()
 
-        return torch.ByteTensor(img), torch.ByteTensor(seg)
+        return torch.ByteTensor(img), torch.FloatTensor(heats)
 
     def __len__(self):
         return len(self.data)
 
     def post_fetch_fn(self, batch):
-        imgs, segs = batch
+        imgs, heats = batch
         imgs = imgs.float()
         imgs -= torch.FloatTensor([123.675, 116.28,
                                    103.53]).reshape(1, 3, 1, 1).to(imgs.device)
@@ -138,51 +140,7 @@ class BasicDataset(torch.utils.data.Dataset):
             h = int(h * scale / 32) * 32
             w = int(w * scale / 32) * 32
             imgs = F.interpolate(imgs, (h, w))
-        return (imgs, segs.long())
-
-
-class SegImgDataset(BasicDataset):
-    def __init__(self,
-                 path,
-                 img_size=224,
-                 augments=TRAIN_AUGS,
-                 multi_scale=False,
-                 rect=False,
-                 colormap=VOC_COLORMAP):
-        super(SegImgDataset, self).__init__(img_size=img_size,
-                                            augments=augments,
-                                            multi_scale=multi_scale,
-                                            rect=rect)
-        self.path = path
-        self.classes = []
-        self.build_data()
-        self.data.sort()
-        self.colormap = colormap
-
-    def build_data(self):
-        data_dir = osp.dirname(self.path)
-        with open(osp.join(data_dir, 'classes.names'), 'r') as f:
-            self.classes = [c for c in f.read().split('\n') if c]
-        image_dir = osp.join(data_dir, 'images')
-        label_dir = osp.join(data_dir, 'labels')
-        with open(self.path, 'r') as f:
-            names = [n for n in f.read().split('\n') if n]
-        names = list(set(names))
-        self.data = [[
-            osp.join(image_dir, name),
-            osp.join(label_dir,
-                     osp.splitext(name)[0] + '.png')
-        ] for name in names if osp.splitext(name)[1] in IMG_EXT]
-
-    def get_data(self, idx):
-        img = cv2.imread(self.data[idx][0])
-        seg_color = cv2.imread(self.data[idx][1])
-        seg = np.zeros([seg_color.shape[0], seg_color.shape[1]],
-                       dtype=np.uint8)
-        for ci, c in enumerate(self.colormap):
-            seg[(seg_color == c).all(2)] = ci
-        seg = SegmentationMapsOnImage(seg, shape=img.shape)
-        return img, seg
+        return (imgs, heats)
 
 
 class CocoDataset(BasicDataset):
@@ -208,8 +166,7 @@ class CocoDataset(BasicDataset):
         img_ids = []
         img_paths = []
         img_anns = []
-        self.classes = ['background'
-                        ] + [c['name'] for c in self.coco['categories']]
+        self.classes = [c['name'] for c in self.coco['categories']]
         for img_info in self.coco['images']:
             img_ids.append(img_info['id'])
             img_paths.append(osp.join(self.img_root, img_info['file_name']))
@@ -222,10 +179,13 @@ class CocoDataset(BasicDataset):
 
     def get_data(self, idx):
         img = cv2.imread(self.data[idx][0])
+        polygons = []
         anns = self.data[idx][1]
-        seg = np.zeros([img.shape[0], img.shape[1]], dtype=np.uint8)
+        polygons = []
         for ann in anns:
-            points = np.int64(ann['segmentation']).reshape(-1, 2)
-            seg = cv2.fillPoly(seg, [points], ann['category_id'] + 1, 0)
-        seg = SegmentationMapsOnImage(seg, shape=img.shape)
-        return img, seg
+            polygons.append(
+                Polygon(
+                    np.float32(ann['bbox'][:2]).reshape(-1, 2),
+                    ann['category_id']))
+        polygons = PolygonsOnImage(polygons, img.shape)
+        return img, polygons

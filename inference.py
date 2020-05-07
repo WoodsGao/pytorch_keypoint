@@ -6,20 +6,19 @@ from tqdm import tqdm
 import numpy as np
 import cv2
 import torch
-from models import DeepLabV3Plus
+from models import HRNet
 from utils.inference import inference
-from utils.datasets import VOC_COLORMAP
 from pytorch_modules.utils import device, IMG_EXT
 
 
 def run(img_dir='data/samples',
-        img_size=(512, 512),
-        num_classes=21,
+        img_size=(320, 320),
+        num_classes=2,
         output_dir='outputs',
         weights='weights/best.pt'):
     shutil.rmtree(output_dir, ignore_errors=True)
     os.makedirs(output_dir, exist_ok=True)
-    model = DeepLabV3Plus(num_classes)
+    model = HRNet(num_classes)
     state_dict = torch.load(weights, map_location='cpu')
     model.load_state_dict(state_dict['model'])
     model = model.to(device)
@@ -27,21 +26,22 @@ def run(img_dir='data/samples',
     names = [n for n in os.listdir(img_dir) if osp.splitext(n)[1] in IMG_EXT]
     names.sort()
     for name in tqdm(names):
+        if 'roadSurface_splt' not in name:
+            continue
         path = osp.join(img_dir, name)
         img = cv2.imread(path)
-        segmap = inference(model, [img], img_size)[0]
-        seg = np.zeros(img.shape, dtype=np.uint8)
-        for ci, color in enumerate(VOC_COLORMAP):
-            seg[segmap == ci] = color
-        cv2.imwrite(osp.join(output_dir, osp.splitext(name)[0] + '.png'), seg)
+        kps = inference(model, [img], img_size)[0]
+        for (x, y) in kps:
+            cv2.circle(img, (int(x*img.shape[1]), int(y*img.shape[0])), 2, (0, 0, 255), -1)
+        cv2.imwrite(osp.join(output_dir, osp.splitext(name)[0] + '.png'), img)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--src', type=str, default='data/samples')
     parser.add_argument('--dst', type=str, default='outputs')
-    parser.add_argument('--img-size', type=str, default='512')
-    parser.add_argument('--num-classes', type=int, default=21)
+    parser.add_argument('--img-size', type=str, default='320')
+    parser.add_argument('--num-classes', type=int, default=2)
     parser.add_argument('--weights', type=str, default='weights/best.pt')
     opt = parser.parse_args()
     print(opt)

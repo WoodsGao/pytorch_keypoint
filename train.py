@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 from pytorch_modules.utils import Fetcher, Trainer
 from utils.datasets import CocoDataset
-from models import DeepLabV3Plus
+from models import HRNet
 from utils.utils import compute_loss
 
 
@@ -35,6 +35,7 @@ def train(data_dir,
 
     train_data = CocoDataset(train_coco,
                              img_size=img_size,
+                             augments=None,
                              multi_scale=multi_scale,
                              rect=rect)
     train_loader = DataLoader(
@@ -65,7 +66,7 @@ def train(data_dir,
         )
         val_fetcher = Fetcher(val_loader, post_fetch_fn=val_data.post_fetch_fn)
 
-    model = DeepLabV3Plus(len(train_data.classes))
+    model = HRNet(len(train_data.classes))
 
     trainer = Trainer(model,
                       train_fetcher,
@@ -81,7 +82,7 @@ def train(data_dir,
         trainer.step()
         if not notest:
             best = False
-            metrics = test(trainer.model, val_fetcher, conf_thres=0.1)
+            metrics = test(trainer.model, val_fetcher)
             if metrics > trainer.metrics:
                 best = True
                 trainer.metrics = metrics

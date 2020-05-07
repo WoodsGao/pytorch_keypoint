@@ -26,9 +26,9 @@ def test(model, fetcher):
         outputs = model(inputs)
         loss = compute_loss(outputs, targets, model)
         val_loss += loss.item()
-        predicted = outputs.max(1)[1]
+        predicted = outputs
         if idx == 0:
-            show_batch(inputs, predicted)
+            show_batch(inputs, outputs)
         predicted = predicted.view(-1)
         targets = targets.view(-1)
         eq = predicted.eq(targets)
