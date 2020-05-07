@@ -1,4 +1,6 @@
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 from pytorch_modules.utils import device, Fetcher
@@ -17,58 +19,47 @@ def test(model, fetcher):
     num_classes = len(classes)
     total_size = 0
     # true positive / intersection
-    tp = torch.zeros(num_classes)
-    fp = torch.zeros(num_classes)
-    fn = torch.zeros(num_classes)
+    n = torch.zeros(num_classes)
+    l2_sum = torch.zeros(num_classes)
     pbar = tqdm(fetcher)
     for idx, (inputs, targets) in enumerate(pbar):
         batch_idx = idx + 1
         outputs = model(inputs)
         loss = compute_loss(outputs, targets, model)
         val_loss += loss.item()
-        predicted = outputs
-        if idx == 0:
-            show_batch(inputs, outputs)
-        predicted = predicted.view(-1)
-        targets = targets.view(-1)
-        eq = predicted.eq(targets)
-        total_size += predicted.size(0)
-        for c_i, c in enumerate(classes):
-            indices = targets.eq(c_i)
-            positive = indices.sum().item()
-            tpi = eq[indices].sum().item()
-            fni = positive - tpi
-            fpi = predicted.eq(c_i).sum().item() - tpi
-            tp[c_i] += tpi
-            fn[c_i] += fni
-            fp[c_i] += fpi
-        T, P, R, miou, F1 = compute_metrics(tp, fn, fp)
+        normalize_size = (64, 64)
+        targets = F.interpolate(targets,
+                                normalize_size,
+                                mode='bilinear',
+                                align_corners=False).view(
+                                    targets.size(0), targets.size(1),
+                                    normalize_size[0] *
+                                    normalize_size[1]).argmax(2)
+        outputs = F.interpolate(outputs,
+                                normalize_size,
+                                mode='bilinear',
+                                align_corners=False).view(
+                                    outputs.size(0), outputs.size(1),
+                                    normalize_size[0] *
+                                    normalize_size[1]).argmax(2)
+        y_dis = (targets // normalize_size[0] - outputs // normalize_size[0]) / float(normalize_size[1])
+        x_dis = (targets % normalize_size[0] - outputs % normalize_size[0]) / float(normalize_size[0])
+        l2 = y_dis**2 + x_dis**2
+        l2 = torch.sqrt(l2)
+        n += len(l2)
+        l2_sum += l2.sum(0).cpu()
         pbar.set_description(
-            'loss: %8g, mAP: %8g, F1: %8g, miou: %8g' %
-            (val_loss / batch_idx, P.mean(), F1.mean(), miou.mean()))
+            'loss: %8g, NME: %8g' %
+            (val_loss / batch_idx, l2_sum.sum() / max(1, n.sum())))
     if dist.is_initialized():
-        tp = tp.to(device)
-        fn = fn.to(device)
-        fp = fp.to(device)
-        dist.all_reduce(tp, op=dist.ReduceOp.SUM)
-        dist.all_reduce(fn, op=dist.ReduceOp.SUM)
-        dist.all_reduce(fp, op=dist.ReduceOp.SUM)
-        T, P, R, miou, F1 = compute_metrics(tp.cpu(), fn.cpu(), fp.cpu())
-    if len(classes) < 10:
-        for c_i, c in enumerate(classes):
-            print(
-                'cls: %8s, targets: %8d, pre: %8g, rec: %8g, iou: %8g, F1: %8g'
-                % (c, T[c_i], P[c_i], R[c_i], miou[c_i], F1[c_i]))
-    else:
-        print('top error 5')
-        copy_miou = miou.clone()
-        for i in range(5):
-            c_i = copy_miou.min(0)[1]
-            copy_miou[c_i] = 1
-            print(
-                'cls: %8s, targets: %8d, pre: %8g, rec: %8g, iou: %8g, F1: %8g'
-                % (classes[c_i], T[c_i], P[c_i], R[c_i], miou[c_i], F1[c_i]))
-    return miou.mean().item()
+        n = n.to(device)
+        l2_sum = l2_sum.to(device)
+        dist.all_reduce(n, op=dist.ReduceOp.SUM)
+        dist.all_reduce(l2_sum, op=dist.ReduceOp.SUM)
+
+    for c_i, c in enumerate(classes):
+        print('cls: %8s, NME: %8g' % (c, l2_sum[c_i] / max(1, n[c_i])))
+    return (l2_sum.sum() / max(1, n.sum())).item()
 
 
 if __name__ == "__main__":

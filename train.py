@@ -83,7 +83,7 @@ def train(data_dir,
         if not notest:
             best = False
             metrics = test(trainer.model, val_fetcher)
-            if metrics > trainer.metrics:
+            if metrics < trainer.metrics:
                 best = True
                 trainer.metrics = metrics
         if not nosave:

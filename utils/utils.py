@@ -16,7 +16,7 @@ focal = FocalBCELoss()
 def compute_loss(outputs, targets, model):
     outputs = F.interpolate(outputs, (targets.size(2), targets.size(3)),
                             mode='bilinear',
-                            align_corners=True)
+                            align_corners=False)
     loss = MSE(outputs.sigmoid(), targets)
     return loss
 
