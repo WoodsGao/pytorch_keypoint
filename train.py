@@ -35,7 +35,6 @@ def train(data_dir,
 
     train_data = CocoDataset(train_coco,
                              img_size=img_size,
-                             augments=None,
                              multi_scale=multi_scale,
                              rect=rect)
     train_loader = DataLoader(

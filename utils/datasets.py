@@ -82,11 +82,19 @@ class BasicDataset(torch.utils.data.Dataset):
         if self.rect:
             scale = min(self.img_size[0] / w, self.img_size[1] / h)
             resize = ia.Sequential([
-                ia.Resize((int(w * scale), int(h * scale))),
-                ia.PadToFixedSize(*self.img_size)
+                ia.Resize({
+                    'width': int(w * scale),
+                    'height': int(h * scale)
+                }),
+                ia.PadToFixedSize(*self.img_size,
+                                  pad_cval=[123.675, 116.28, 103.53],
+                                  position='center')
             ])
         else:
-            resize = ia.Resize(self.img_size)
+            resize = ia.Resize({
+                'width': self.img_size[0],
+                'height': self.img_size[1]
+            })
 
         img = resize.augment_image(img)
         kps = resize.augment_polygons(kps)
@@ -105,7 +113,7 @@ class BasicDataset(torch.utils.data.Dataset):
 
             # evaluate kernels at grid points
             xxyy = np.c_[xx.ravel(), yy.ravel()]
-            sigma = 20  # 65.9  # math.sqrt(- math.pow(100, 2) / math.log(0.1))
+            sigma = 10  # 65.9  # math.sqrt(- math.pow(100, 2) / math.log(0.1))
             xxyy -= point
             x_term = xxyy[:, 0]**2
             y_term = xxyy[:, 1]**2
