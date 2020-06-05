@@ -1,14 +1,16 @@
+import argparse
+
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributed as dist
 from torch.utils.data import DataLoader
-from pytorch_modules.utils import device, Fetcher
-from models import DeepLabV3Plus
-from utils.datasets import CocoDataset
-from utils.utils import compute_loss, show_batch, compute_metrics
 from tqdm import tqdm
-import argparse
+
+from models import DeepLabV3Plus
+from pytorch_modules.utils import Fetcher, device
+from utils.datasets import CocoDataset
+from utils.utils import compute_loss, compute_metrics, show_batch
 
 
 @torch.no_grad()
