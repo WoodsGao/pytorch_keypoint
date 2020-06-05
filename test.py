@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from models import DeepLabV3Plus
+from models import HRNet
 from pytorch_modules.utils import Fetcher, device
 from utils.datasets import CocoDataset
 from utils.utils import compute_loss, compute_metrics, show_batch
@@ -45,8 +45,10 @@ def test(model, fetcher):
                                     outputs.size(0), outputs.size(1),
                                     normalize_size[0] *
                                     normalize_size[1]).argmax(2)
-        y_dis = (targets // normalize_size[0] - outputs // normalize_size[0]) / float(normalize_size[1])
-        x_dis = (targets % normalize_size[0] - outputs % normalize_size[0]) / float(normalize_size[0])
+        y_dis = (targets // normalize_size[0] -
+                 outputs // normalize_size[0]) / float(normalize_size[1])
+        x_dis = (targets % normalize_size[0] -
+                 outputs % normalize_size[0]) / float(normalize_size[0])
         l2 = y_dis**2 + x_dis**2
         l2 = torch.sqrt(l2)
         n += len(l2)
@@ -67,21 +69,22 @@ def test(model, fetcher):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--coco', type=str, default='data/coco.json')
-    parser.add_argument('--img-size', type=str, default='512')
-    parser.add_argument('--batch-size', type=int, default=4)
+    parser.add_argument('val', type=str)
     parser.add_argument('--weights', type=str, default='')
+    parser.add_argument('--rect', action='store_true')
+    parser.add_argument('-s',
+                        '--img_size',
+                        type=int,
+                        nargs=2,
+                        default=[416, 416])
+    parser.add_argument('-bs', '--batch-size', type=int, default=32)
     parser.add_argument('--num-workers', type=int, default=4)
     opt = parser.parse_args()
 
-    img_size = opt.img_size.split(',')
-    assert len(img_size) in [1, 2]
-    if len(img_size) == 1:
-        img_size = [int(img_size[0])] * 2
-    else:
-        img_size = [int(x) for x in img_size]
-
-    val_data = CocoDataset(opt.coco, img_size=img_size, augments=None)
+    val_data = CocoDataset(opt.val,
+                           img_size=opt.img_size,
+                           augments=None,
+                           rect=opt.rect)
     val_loader = DataLoader(
         val_data,
         batch_size=opt.batch_size,
@@ -89,7 +92,7 @@ if __name__ == "__main__":
         num_workers=opt.num_workers,
     )
     val_fetcher = Fetcher(val_loader, post_fetch_fn=val_data.post_fetch_fn)
-    model = DeepLabV3Plus(len(val_data.classes))
+    model = HRNet(len(val_data.classes))
     if opt.weights:
         state_dict = torch.load(opt.weights, map_location='cpu')
         model.load_state_dict(state_dict['model'])

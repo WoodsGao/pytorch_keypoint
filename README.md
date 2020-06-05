@@ -41,14 +41,11 @@ You can use `split_coco_json.py` from [woodsgao/cv_utils](https://github.com/woo
 
 ### Distributed Training
 
-Run the following command in all nodes.Every node will save your weights
-    python3 train.py data/<custom>
-Or in distributed
     python3 -m torch.distributed.launch --nproc_per_node=<nproc> train.py data/<custom>
 
 ### Testing
 
-    python3 test.py data/<custom>/val.json
+    python3 test.py data/<custom>/val.json --weights weights.pth
 
 ### Inference
 
